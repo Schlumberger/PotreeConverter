@@ -288,6 +288,8 @@ Potree.toMaterialID = function(materialName){
 		return Potree.PointColorType.PHONG;
 	} else if (materialName === 'Index') {
 		return Potree.PointColorType.POINT_INDEX;
+	} else if (materialName === 'Elevation and Intensity Filter') {
+		return Potree.PointColorType.HEIGHT_FILTER;
 	} else if (materialName === 'RGB and Elevation') {
 		return Potree.PointColorType.RGB_HEIGHT;
 	} else if (materialName === 'Composite') {
@@ -320,6 +322,8 @@ Potree.toMaterialName = function(materialID) {
 		return 'Phong';
 	} else if (materialID === Potree.PointColorType.POINT_INDEX) {
 		return 'Index';
+	} else if (materialID === Potree.PointColorType.HEIGHT_FILTER) {
+		return 'Elevation and Intensity Filter';
 	} else if (materialID === Potree.PointColorType.RGB_HEIGHT) {
 		return 'RGB and Elevation';
 	} else if (materialID === Potree.PointColorType.COMPOSITE) {
@@ -2961,6 +2965,10 @@ float getIntensity(){
 	return w;
 }
 
+bool isIntensityInRange() {
+	return !(intensity < intensityRange.x || intensity > intensityRange.y);
+}
+
 vec3 getElevation(){
 	vec4 world = modelMatrix * vec4( position, 1.0 );
 	float w = (world.z - elevationRange.x) / (elevationRange.y - elevationRange.x);
@@ -3047,6 +3055,8 @@ vec3 getColor(){
 	#ifdef color_type_rgb
 		color = getRGB();
 	#elif defined color_type_height
+		color = getElevation();
+	#elif defined color_type_height_filter
 		color = getElevation();
 	#elif defined color_type_rgb_height
 		vec3 cHeight = getElevation();
@@ -3168,6 +3178,12 @@ bool pointInClipPolygon(vec3 point, int polyIdx) {
 #endif
 
 void doClipping(){
+	#if defined color_type_height_filter
+		if (!isIntensityInRange()) {
+			gl_Position = vec4(100.0, 100.0, 100.0, 0.0);
+			return;
+		}
+	#endif
 
 	#if !defined color_type_composite
 		vec4 cl = getClassification(); 
@@ -5265,6 +5281,7 @@ Potree.PointColorType = {
 	NORMAL: 11,
 	PHONG: 12,
 	RGB_HEIGHT: 13,
+	HEIGHT_FILTER: 14,
 	COMPOSITE: 50
 };
 
@@ -5494,6 +5511,8 @@ Potree.PointCloudMaterial = class PointCloudMaterial extends THREE.RawShaderMate
 			defines.push('#define color_type_phong');
 		} else if (this._pointColorType === Potree.PointColorType.RGB_HEIGHT) {
 			defines.push('#define color_type_rgb_height');
+		} else if (this._pointColorType === Potree.PointColorType.HEIGHT_FILTER) {
+			defines.push('#define color_type_height_filter');
 		} else if (this._pointColorType === Potree.PointColorType.COMPOSITE) {
 			defines.push('#define color_type_composite');
 		}
@@ -23734,6 +23753,7 @@ Potree.PropertiesPanel = class PropertriesPanel{
 				'Elevation',
 				'Intensity',
 				'Intensity Gradient',
+				'Elevation and Intensity Filter',
 				'Classification',
 				'Return Number',
 				'Source',
@@ -23783,6 +23803,9 @@ Potree.PropertiesPanel = class PropertriesPanel{
 				} else if (selectedValue === 'Color') {
 					blockColor.css('display', 'block');
 				} else if (selectedValue === 'Intensity') {
+					blockIntensity.css('display', 'block');
+				} else if (selectedValue === 'Elevation and Intensity Filter') {
+					blockElevation.css('display', 'block');
 					blockIntensity.css('display', 'block');
 				} else if (selectedValue === 'Intensity Gradient') {
 					blockIntensity.css('display', 'block');
@@ -23865,14 +23888,32 @@ Potree.PropertiesPanel = class PropertriesPanel{
 				}
 			});
 
+			var shiftpressed = false;
+			var range = 0.25;
+			$(window).keydown(function(event) {
+				shiftpressed = true;
+				var min = panel.find('#sldIntensityRange').slider("values")[0];
+				var max = panel.find('#sldIntensityRange').slider("values")[1];
+				range = max - min;
+			}).keyup(function(event) {
+				shiftpressed = false;
+			})
 			panel.find('#sldIntensityRange').slider({
 				range: true,
 				min: 0, max: 1, step: 0.01,
 				values: [0, 1],
 				slide: (event, ui) => {
-					let min = (Number(ui.values[0]) === 0) ? 0 : parseInt(Math.pow(2, 16 * ui.values[0]));
-					let max = parseInt(Math.pow(2, 16 * ui.values[1]));
-					material.intensityRange = [min, max];
+					let min = ui.values[0];
+					let max = ui.values[1];
+					if (shiftpressed) {
+						if (ui.handleIndex === 0 && (min + range) < 1)
+							max = min + range;
+						else if ((max - range) > 0)
+							min = max - range;
+					}
+					let minLog = (Number(min) === 0) ? 0 : parseInt(Math.pow(2,16*min));
+					let maxLog = (Number(max) === 0) ? 0 : parseInt(Math.pow(2,16*max));
+					material.intensityRange = [minLog, maxLog];
 				}
 			});
 
